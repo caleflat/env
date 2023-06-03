@@ -1,6 +1,7 @@
 package env
 
 import (
+	"errors"
 	"os"
 	"reflect"
 	"strconv"
@@ -22,11 +23,13 @@ const (
 //	}
 //
 //	var config Config
-//	env.Parse(&config)
+//	if err := Parse(&config); err != nil {
+//		// handle error
+//	}
 //
 //	fmt.Println(config.Port)
 //
-// If the environment variable is not present, the field value is not modified.
+// If the environment variable is not present, an error is returned.
 // If the environment variable is present, but the field cannot be set, an error
 // is returned.
 func Parse(config interface{}) error {
@@ -49,7 +52,9 @@ func parse(config interface{}, prefix string) error {
 		value := v.Field(i)
 
 		if value.Kind() == reflect.Struct {
-			parse(value.Addr().Interface(), field.Tag.Get(DefaultTag))
+			if err := parse(value.Addr().Interface(), field.Tag.Get(DefaultTag)); err != nil {
+				return err
+			}
 		} else {
 			env := field.Tag.Get(DefaultTag)
 			if env == "" {
@@ -66,16 +71,16 @@ func parse(config interface{}, prefix string) error {
 }
 
 // setField sets the value of the field to the environment variable.
-// If the environment variable is not present, the field value is not modified.
+// If the environment variable is not present, an error is returned.
 // If the environment variable is present, but the field cannot be set, an error
 // is returned.
 func setField(value reflect.Value, env string) error {
 	if !value.CanSet() {
-		return nil
+		return errors.New("cannot set field value")
 	}
 
 	if !value.IsValid() {
-		return nil
+		return errors.New("invalid field value")
 	}
 
 	if value.Kind() == reflect.Ptr {
@@ -84,156 +89,183 @@ func setField(value reflect.Value, env string) error {
 
 	switch value.Kind() {
 	case reflect.String:
-		value.SetString(GetString(env, ""))
+		if s, ok := GetString(env); ok {
+			value.SetString(s)
+		} else {
+			return errors.New("environment variable not found: " + env)
+		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		value.SetInt(GetInt64(env, 0))
+		if i, ok := GetInt64(env); ok {
+			value.SetInt(i)
+		} else {
+			return errors.New("environment variable not found: " + env)
+		}
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		value.SetUint(uint64(GetInt64(env, 0)))
+		if u, ok := GetUint64(env); ok {
+			value.SetUint(u)
+		} else {
+			return errors.New("environment variable not found: " + env)
+		}
 	case reflect.Bool:
-		value.SetBool(GetBool(env, false))
+		if b, ok := GetBool(env); ok {
+			value.SetBool(b)
+		} else {
+			return errors.New("environment variable not found: " + env)
+		}
 	case reflect.Float32, reflect.Float64:
-		value.SetFloat(GetFloat64(env, 0))
+		if f, ok := GetFloat64(env); ok {
+			value.SetFloat(f)
+		} else {
+			return errors.New("environment variable not found: " + env)
+		}
 	}
 
 	return nil
 }
 
 // GetString returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetString(key string, defaultValue string) string {
-	value := Get(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	return value
+// If the variable is not present in the environment, an empty string and false are returned.
+func GetString(key string) (string, bool) {
+	value, ok := os.LookupEnv(key)
+	return value, ok
 }
 
 // GetInt returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetInt(key string, defaultValue int) int {
-	return int(GetInt64(key, int64(defaultValue)))
+// If the variable is not present in the environment, 0 and false are returned.
+func GetInt(key string) (int, bool) {
+	i, ok := GetInt64(key)
+	return int(i), ok
 }
 
 // GetInt64 returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetInt64(key string, defaultValue int64) int64 {
-	value := Get(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	return ParseInt(value, defaultValue)
-}
-
-// GetUint returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetUint(key string, defaultValue uint) uint {
-	return uint(GetUint64(key, uint64(defaultValue)))
-}
-
-// GetUint64 returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetUint64(key string, defaultValue uint64) uint64 {
-	value := Get(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	return ParseUint(value, defaultValue)
-}
-
-// GetBool returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetBool(key string, defaultValue bool) bool {
-	value := Get(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	return ParseBool(value, defaultValue)
-}
-
-// GetFloat64 returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-func GetFloat64(key string, defaultValue float64) float64 {
-	value := Get(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	return ParseFloat(value, defaultValue)
-}
-
-// Get returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, an empty string is returned.
-func Get(key string) string {
+// If the variable is not present in the environment, 0 and false are returned.
+func GetInt64(key string) (int64, bool) {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return ""
-	}
-
-	return value
-}
-
-// ParseInt parses the string value into an int64.
-// If the string is empty, the default value is returned.
-func ParseInt(value string, defaultValue int64) int64 {
-	if value == "" {
-		return defaultValue
+		return 0, false
 	}
 
 	i, err := parseInt(value)
 	if err != nil {
-		return defaultValue
+		return 0, false
 	}
 
-	return i
+	return i, true
 }
 
-// ParseUint parses the string value into an uint64.
-// If the string is empty, the default value is returned.
-func ParseUint(value string, defaultValue uint64) uint64 {
-	if value == "" {
-		return defaultValue
+// GetUint returns the value of the environment variable named by the key.
+// If the variable is not present in the environment, 0 and false are returned.
+func GetUint(key string) (uint, bool) {
+	u, ok := GetUint64(key)
+	return uint(u), ok
+}
+
+// GetUint64 returns the value of the environment variable named by the key.
+// If the variable is not present in the environment, 0 and false are returned.
+func GetUint64(key string) (uint64, bool) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return 0, false
 	}
 
-	i, err := parseUint(value)
+	u, err := parseUint(value)
 	if err != nil {
-		return defaultValue
+		return 0, false
 	}
 
-	return i
+	return u, true
 }
 
-// ParseBool parses the string value into a bool.
-// If the string is empty, the default value is returned.
-func ParseBool(value string, defaultValue bool) bool {
-	if value == "" {
-		return defaultValue
+// GetBool returns the value of the environment variable named by the key.
+// If the variable is not present in the environment, false and false are returned.
+func GetBool(key string) (bool, bool) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
 	}
 
 	b, err := parseBool(value)
 	if err != nil {
-		return defaultValue
+		return false, false
 	}
 
-	return b
+	return b, true
 }
 
-// ParseFloat parses the string value into a float64.
-// If the string is empty, the default value is returned.
-func ParseFloat(value string, defaultValue float64) float64 {
-	if value == "" {
-		return defaultValue
+// GetFloat64 returns the value of the environment variable named by the key.
+// If the variable is not present in the environment, 0 and false are returned.
+func GetFloat64(key string) (float64, bool) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return 0, false
 	}
 
 	f, err := parseFloat(value)
 	if err != nil {
-		return defaultValue
+		return 0, false
 	}
 
-	return f
+	return f, true
+}
+
+// ParseInt parses the string value into an int64.
+// If the string is empty or parsing fails, 0 and false are returned.
+func ParseInt(value string) (int64, bool) {
+	if value == "" {
+		return 0, false
+	}
+
+	i, err := parseInt(value)
+	if err != nil {
+		return 0, false
+	}
+
+	return i, true
+}
+
+// ParseUint parses the string value into an uint64.
+// If the string is empty or parsing fails, 0 and false are returned.
+func ParseUint(value string) (uint64, bool) {
+	if value == "" {
+		return 0, false
+	}
+
+	u, err := parseUint(value)
+	if err != nil {
+		return 0, false
+	}
+
+	return u, true
+}
+
+// ParseBool parses the string value into a bool.
+// If the string is empty or parsing fails, false and false are returned.
+func ParseBool(value string) (bool, bool) {
+	if value == "" {
+		return false, false
+	}
+
+	b, err := parseBool(value)
+	if err != nil {
+		return false, false
+	}
+
+	return b, true
+}
+
+// ParseFloat parses the string value into a float64.
+// If the string is empty or parsing fails, 0 and false are returned.
+func ParseFloat(value string) (float64, bool) {
+	if value == "" {
+		return 0, false
+	}
+
+	f, err := parseFloat(value)
+	if err != nil {
+		return 0, false
+	}
+
+	return f, true
 }
 
 func parseInt(value string) (int64, error) {
@@ -251,15 +283,3 @@ func parseBool(value string) (bool, error) {
 func parseFloat(value string) (float64, error) {
 	return strconv.ParseFloat(value, 64)
 }
-
-// MustGetString returns the value of the environment variable named by the key.
-// If the variable is not present in the environment, the default value is returned.
-// If the variable is not present in the environment and the default value is empty, it panics.
-// func MustGetString(key string, defaultValue string) string {
-// 	value := GetString(key, defaultValue)
-// 	if value == "" {
-// 		panic(fmt.Sprintf("environment variable %s is not set", key))
-// 	}
-
-// 	return value
-// }

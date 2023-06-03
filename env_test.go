@@ -2,63 +2,80 @@ package env
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
+type Config struct {
+	Port int    `env:"PORT"`
+	Host string `env:"HOST"`
+}
+
 func TestParse(t *testing.T) {
-	type Config struct {
-		Port int    `env:"PORT"`
-		Dsn  string `env:"DSN"`
-	}
+	// Set environment variables for testing
+	os.Setenv("PORT", "8080")
+	os.Setenv("HOST", "localhost")
 
 	var config Config
-
-	os.Setenv("PORT", "8080")
-	os.Setenv("DSN", "user:pass@tcp(localhost:3306)/db")
-
-	Parse(&config)
-
-	if config.Port != 8080 {
-		t.Errorf("Expected config.Port to be 8080, got %d", config.Port)
+	err := Parse(&config)
+	if err != nil {
+		t.Errorf("Failed to parse environment variables: %v", err)
 	}
 
-	if config.Dsn != "user:pass@tcp(localhost:3306)/db" {
-		t.Errorf("Expected config.Dsn to be user:pass@tcp(localhost:3306)/db, got %s", config.Dsn)
-	}
-
-	os.Setenv("PORT", "")
-
-	Parse(&config)
-
-	if config.Port != 0 {
-		t.Errorf("Expected config.Port to be 8080, got %d", config.Port)
-	}
-
-	if config.Dsn != "user:pass@tcp(localhost:3306)/db" {
-		t.Errorf("Expected config.Dsn to be user:pass@tcp(localhost:3306)/db, got %s", config.Dsn)
+	expectedConfig := Config{Port: 8080, Host: "localhost"}
+	if !reflect.DeepEqual(config, expectedConfig) {
+		t.Errorf("Parsed config does not match expected config.\nExpected: %+v\nGot: %+v", expectedConfig, config)
 	}
 }
 
-func TestParseNested(t *testing.T) {
+func TestParse_EnvironmentVariablesNotSet(t *testing.T) {
+	// Clear environment variables for testing
+	os.Clearenv()
+
+	var config Config
+	err := Parse(&config)
+	if err == nil {
+		t.Error("Expected an error while parsing unset environment variables")
+	}
+
+	// Ensure that the config remains unchanged
+	expectedConfig := Config{}
+	if !reflect.DeepEqual(config, expectedConfig) {
+		t.Errorf("Parsed config does not match expected config.\nExpected: %+v\nGot: %+v", expectedConfig, config)
+	}
+}
+
+func TestParse_InvalidEnvironmentVariable(t *testing.T) {
+	os.Setenv("PORT", "invalid")
+
+	var config Config
+	err := Parse(&config)
+	if err == nil {
+		t.Error("Expected an error while parsing invalid environment variable")
+	}
+}
+
+func TestParse_NestedStruct(t *testing.T) {
+	os.Setenv("PORT", "9090")
+	os.Setenv("DSN", "localhost")
+
+	type NestedConfig struct {
+		DSN string `env:"DSN"`
+	}
+
 	type Config struct {
-		Port int `env:"PORT"`
-		Sub  struct {
-			Dsn string `env:"DSN"`
-		}
+		Port   int `env:"PORT"`
+		Nested NestedConfig
 	}
 
 	var config Config
-
-	os.Setenv("PORT", "8080")
-	os.Setenv("DSN", "user:pass@tcp(localhost:3306)/db")
-
-	Parse(&config)
-
-	if config.Port != 8080 {
-		t.Errorf("Expected config.Port to be 8080, got %d", config.Port)
+	err := Parse(&config)
+	if err != nil {
+		t.Errorf("Failed to parse environment variables: %v", err)
 	}
 
-	if config.Sub.Dsn != "user:pass@tcp(localhost:3306)/db" {
-		t.Errorf("Expected config.Sub.Dsn to be user:pass@tcp(localhost:3306)/db, got %s", config.Sub.Dsn)
+	expectedConfig := Config{Port: 9090, Nested: NestedConfig{DSN: "localhost"}}
+	if !reflect.DeepEqual(config, expectedConfig) {
+		t.Errorf("Parsed config does not match expected config.\nExpected: %+v\nGot: %+v", expectedConfig, config)
 	}
 }
